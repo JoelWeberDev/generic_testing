@@ -9,8 +9,7 @@ Notes:
 
 TODO:
 - Add support for keyword arguments
-- Add support for multiple expected exceptions (can be done by passing a tuple or list to the expected value)
-- Clear error messages for the expected value
+- Test generator for creating test cases 
 
 """
 from pynput.keyboard import Key, Controller 
@@ -20,7 +19,7 @@ class GenericTesting:
         self.keyboard = Controller()    
 
     def run_tests(self, func, test_cases, print_args=False, print_res=False):
-        print(f"Running tests for {func.__name__}:")
+        print(f"Running tests for {func.__name__}:\n")
         for i, test in enumerate(test_cases):
             assert isinstance(test, list), "Test cases must be a list of lists"
 
@@ -36,7 +35,9 @@ class GenericTesting:
                 print(f"    Test {i+1} passed")
 
             if print_res:
-                print(res)
+                print(f"    result: {res}")
+
+            print()
 
 
         print(f"Tests for {func.__name__} complete\n")
@@ -51,13 +52,13 @@ class GenericTesting:
             func (python function): Function to be tested
             args (list): List of arguments with the last parameter as an expected exception
         """
-        func_args, expected_exception, expected_value = self._get_args_and_exception(args)
+        func_args, kwargs, expected_exception, expected_value = self._get_args_and_exception(args)
 
         res = None
         failure = None
 
         try:
-            res = func(*func_args)
+            res = func(*func_args, **kwargs)
             if expected_exception is not None:
                 failure = f"Expected exception {expected_exception} was not raised"
             elif expected_value is not None and res != expected_value:
@@ -83,15 +84,49 @@ class GenericTesting:
             type: Expected error 
             any value: Expected value
         """
-        if len(args) > 0 and isinstance(args[-1], dict):
-            if "err" in args[-1]:
-                assert issubclass(args[-1]["err"], BaseException), "Expected exception must be a subclass of BaseException"
-                return args[:-1], args[-1]["err"], None
-            elif "expect" in args[-1]:
-                return args[:-1], None, args[-1]["expect"]
+        kwargs = {}
+        new_args = []
+        err = None
+        expect = None
 
-        return args, None, None
-    
+        for arg in args:
+            if isinstance(arg, dict) and "err" in arg:
+                assert issubclass(arg["err"], BaseException), "Expected exception must be a subclass of BaseException"
+                err = arg["err"]
+
+            elif isinstance(arg, dict) and "expect" in arg:
+                expect = arg["expect"]
+
+            elif isinstance(arg, dict) and "kwargs" in arg and arg["kwargs"] is True:
+                kwargs_copy = arg.copy()
+                del kwargs_copy["kwargs"]
+                kwargs = kwargs_copy 
+
+            else:
+                new_args.append(arg)
+
+        return new_args, kwargs, err, expect
+
+
+    def get_kwargs(self, args):
+        """This function is used to extract the keyword arguments from the test cases
+
+        Args:
+            args (list): List of arguments for the function
+
+        Returns:
+            dict: Dictionary of keyword arguments
+        """
+        arg_dict = {"args": [], "kwargs": {}}
+        for arg in args:
+            if isinstance(arg, dict) and "kwargs" in arg and arg["kwargs"] is True:
+                arg_dict["kwargs"] = arg
+
+            else:
+                arg_dict["args"].append(arg)    
+        return arg_dict
+
+
 
     def _spoof_keypress(self, key):
         """Enters a key press into the system during runtime
@@ -123,10 +158,10 @@ if __name__ == "__main__":
         
         tests = [
             [1, 1],
-            [1, 0, {"err": ZeroDivisionError} ],
-            [1, "a", {"err": TypeError}],
-            [10, 5, {"expect": 2}],
-            [11, 5, {"expect": 3}], # This test should fail
+            [1, 0, { "err": ZeroDivisionError}],
+            [1, "a", { "err": TypeError}],
+            [10, 5, { "expect": 2}],
+            [11, 5, { "expect": 3}], # This test should fail
         ]
 
         gt.run_tests(divide, tests, print_args=True, print_res=True)
@@ -151,3 +186,18 @@ if __name__ == "__main__":
         gt.run_tests(keypresses, tests, print_args=True, print_res=False)
     
     # test_keypresses()
+
+    def test_kwargs():
+        def simple_func(a, b, **kwargs):
+            return a + b, kwargs
+
+        tests = [
+            [1, 1],
+            [1, 1, { "expect": (2, {})}],
+            [1, 1, {"kwargs":True, "c": 3, "d": 4}, { "expect": (2, {"c": 3, "d": 4})}],
+            [1, 1, {"kwargs":True, "c": 3, "d": 4}, { "expect": (2, {"c": 3})}], # This test should fail
+        ]
+
+        gt.run_tests(simple_func, tests, print_args=True, print_res=True)
+
+    test_kwargs()
